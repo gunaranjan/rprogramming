@@ -1,0 +1,121 @@
+# Read into R activity and feature labels, the data from "test" and "train" datasets
+# ===================================================================================
+## Download archive with data and unzip it into the subdirectory "UCI HAR Dataset" of
+## the working directory.
+## UNCOMMENT THIS PART IF THE ORIGINAL DATA IS NOT YET LOADED AND UNZIPPED
+## url <-
+## "http://d396qusza40orc.cloudfront.net/getdata%2Fprojectfiles%2FUCI%20HAR%20Dataset.zip"
+## zipPath <- "UCIDataset.zip"
+## if (!file.exists(zfile)) {
+## download.file(url, zipPath)
+## unzip(zipPath)
+## }
+## Get only labels to later use as Activity factor levels of the merged dataset.
+activity_label <- read.table("./UCI HAR Dataset/activity_labels.txt", as.is=T)[,2]
+## Get feature labels and position to easily select required columns in merged data.
+feature_label <- read.table("./UCI HAR Dataset/features.txt",
+col.names=c("pos", "label"), as.is=T)
+## Load "test" and "train" datasets. First read the file with subject code, then
+## activity code, and lastly actual measurement data.
+train_subject <- read.table("./UCI HAR Dataset/train/subject_train.txt",
+col.names="Subject")
+train_activity <- read.table("./UCI HAR Dataset/train/y_train.txt",
+col.names="Activity")
+train_features <- read.table("./UCI HAR Dataset/train/X_train.txt")
+test_subject <- read.table("./UCI HAR Dataset/test/subject_test.txt",
+col.names="Subject")
+test_activity <- read.table("./UCI HAR Dataset/test/y_test.txt",
+col.names="Activity")
+test_features <- read.table("./UCI HAR Dataset/test/X_test.txt")
+# Merge the training and the test sets to create one data set
+# ============================================================
+## Library "dplyr" is used further for all purposes of data manipulation.
+library("dplyr")
+## Merge columns for each dataset and then merge datasets together
+merged <- bind_cols(bind_rows(train_subject, test_subject),
+bind_rows(train_activity, test_activity),
+bind_rows(train_features, test_features))
+## Make factors from numeric variables for Activity and Subject
+merged[,1:2] <- lapply(merged[,1:2], factor)
+# Extract only the measurements on the mean and standard deviation
+# ================================================================
+## Only features, that have names containing "mean()" and "std()" are considered to be
+## appropriate measurements. They are filtered first in feature_label frame using regular
+## expressions in grepl function, and then in merged dataframe using column positions
+## (taking into account two additional variables added to "merged" on previous stage).
+feature_label <- filter(feature_label, grepl("(mean\\(\\)|std\\(\\))", label))
+merged <- merged[, append(1:2, feature_label$pos+2)]
+# Use descriptive activity names to name the activities in the data set
+# ======================================================================
+levels(merged$Activity) <- activity_label
+# Appropriately label the data set with descriptive variable names
+# ================================================================
+## The function below transforms original name of any variable remaining (this name
+## could be inappropriate for R) into the following vector. It's first element contains
+## new variable name, suitable for use in R, and other 4 elements contain decomposition
+## of this name along the "domain", "feature", "statistic" and "direction" dimensions.
+## During the next step "domain", "direction" and "feature" are used as factor variables,
+## only "statistics" become names for new numeric variables. The resulting tidy dataset
+## would be "longer" than original format.
+breakdownFeatureName <- function(oldName) {
+newName <- sub("BodyBody","Body", oldName) #Correct wrong names in original data.
+newName <- sub("std()", "Std", newName, fixed=T) #Change the statistic name to upper
+newName <- sub("mean()", "Mean", newName, fixed=T) #case and remove parenthesis.
+newName <- sub("^t", "Time-", newName)
+newName <- sub("^f", "Frequency-", newName)
+n <- nchar(newName)
+lastCh <- substr(newName, n, n)
+if (lastCh %in% c("X", "Y", "Z")) {
+newName <- paste0(newName, "axis")
+}
+else {
+newName <- paste0(gsub("Mag-", "-", newName), "-Magnitude")
+}
+result <- append(gsub("-", "", newName), unlist(strsplit(newName, "-")))
+names(result) <- c("completeName", "domain", "feature", "statistic", "direction")
+result
+}
+## Produce a matrix with breakdown of old names and paste these names in the "merged"
+## dataset (starting after first two variables: Subject and Activity)
+newFeatureNames <- sapply(feature_label[,2], breakdownFeatureName, USE.NAMES=F)
+names(merged)[-(1:2)] <- newFeatureNames["completeName",]
+# From the data set in previous step, create a second, independent tidy data set
+# with the average of each variable for each activity and each subject
+# ==============================================================================
+## To make the dataset tidier I convert it to a longer form, in which original variables
+## are decomposed into "feature" (general type of measurement, e.g. body/ gravity linear
+## acceleration, angular velocity, Jerk signal, etc.), "domain" (Time or Frequency),
+## "direction" (projections on X-, Y- and Z-axis or vector Magnitude) and general
+## type of calculated "statistic" (Mean or Standard Deviation).
+## This "long" dataset could be easily "widened" by converting levels of any added factor
+## into variable names. However as long as the set of original variables is incomplete,
+## such widening would introduce NAs in all cases except "statistic" factor.
+## To accomplish further transformations, dplyr and tidyr packages are used.
+library("tidyr")
+## Convert to dataframe the matrix of new variable names and factor levels, into which
+## these names could be divided.
+newFeatureNames <- as.data.frame(t(newFeatureNames), stringsAsFactors=F)
+## First, merged dataset is converted to the "long" form and all variables are decomposed.
+tidied <- merged %>%
+gather(completeName, value, -c(Subject, Activity)) %>%
+left_join(., newFeatureNames) %>%
+select(Subject, Activity, domain, direction, statistic, feature, value)
+## Convert new character variables into factors.
+tidied[,3:6] <- lapply(tidied[,3:6], factor)
+## The averaging is performed according to the assignment (this step also guarantees the
+## uniqueness of factors in every row to prevent error, when using spread function later).
+tidied <- tidied %>%
+group_by(Subject, Activity, domain, direction, statistic, feature) %>%
+summarise(value=mean(value))
+## Lastly, data is slightly "widened" by addition of separate variables for mean and
+## standard deviation statistics. "Statistic" is the only dimension for which "spreading"
+## wouldn't produce NAs.
+tidied <- spread(tidied, statistic, value)
+# Write last dataframe into text file for submission
+# ===================================================
+write.table(file="tidied.txt", tidied, row.names=F, quote=F, sep="\t")
+
+
+
+
+
